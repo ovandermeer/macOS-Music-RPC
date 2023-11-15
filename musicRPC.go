@@ -50,8 +50,7 @@ func main() {
 
 			// If music stopped playing between first check and now, then stop
 			if songTitle != "" && albumTitle != "" && artistName != "" {
-				songEndTime := getSongEndTime()
-				currentTime := time.Now()
+				songStartTime, songEndTime := getSongTimestamps()
 
 				// If the album has changed, check if the file exists on CDN, otherwise upload
 				if albumTitle != lastAlbum {
@@ -68,12 +67,12 @@ func main() {
 
 				// Set Discord activity
 				err := client.SetActivity(client.Activity{
-					State:      artistName,
+					State:      "by " + artistName,
 					Details:    songTitle,
 					LargeImage: albumArtURL,
 					LargeText:  albumTitle,
 					Timestamps: &client.Timestamps{
-						Start: &currentTime,
+						Start: &songStartTime,
 						End:   &songEndTime,
 					},
 					Buttons: []*client.Button{
@@ -121,7 +120,7 @@ func isMusicAppRunning() bool {
 	return strings.TrimSpace(string(output)) == "true"
 }
 
-// Uploads the album art of the currently plaing song to the CDN
+// Uploads the album art of the currently playing song to the CDN
 func uploadNewAlbumArt(fileTitle string, uCareClient ucare.Client) string {
 	path, err := os.Getwd()
 	if err != nil {
@@ -276,10 +275,10 @@ func getSongMetaData() (string, string, string) {
 }
 
 // Returns the end time of the song
-func getSongEndTime() time.Time {
+func getSongTimestamps() (time.Time, time.Time) {
 	script := `tell application "Music"
 		if player state is playing then
-			return (duration of current track - player position)
+			return {duration of current track, player position}
 		end if
 	end tell`
 
@@ -287,21 +286,30 @@ func getSongEndTime() time.Time {
 
 	output, err := cmd.Output()
 	if err != nil {
-		return time.Now()
+		return time.Now(), time.Now()
 	}
+
+	// Remove leading/trailing whitespace and newline characters
+	result := strings.TrimSpace(string(output))
+
+	fields := strings.Split(result, ", ")
 
 	now := time.Now()
 
-	timeRemaining := string(output)
-
-	timeRemainingList := strings.Split(timeRemaining, ".")
-
-	myInt, err := strconv.Atoi(timeRemainingList[0])
-
+	songDuration, err := strconv.Atoi(strings.Split(fields[0], ".")[0])
 	if err != nil {
-		return time.Now()
+		return time.Now(), time.Now()
+	}
+	timeElapsed, err := strconv.Atoi(strings.Split(fields[1], ".")[0])
+	if err != nil {
+		return time.Now(), time.Now()
 	}
 
-	endTime := now.Add(time.Second * time.Duration(myInt))
-	return endTime
+	timeRemaining := songDuration - timeElapsed
+
+
+	endTime := now.Add(time.Second * time.Duration(timeRemaining))
+	startTime := now.Add(-(time.Second * time.Duration(songDuration - timeRemaining)))
+
+	return startTime, endTime
 }
