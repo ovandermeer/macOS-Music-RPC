@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,15 +18,24 @@ import (
 	"github.com/uploadcare/uploadcare-go/upload"
 )
 
-func main() {
-	lastAlbum := ""
-	albumArtURL := ""
+const refreshSeconds = 5
 
-	// Login to Discord app
-	err := client.Login("1111418320843976784")
-	if err != nil {
-		panic(err)
-	}
+type SongData struct {
+	SongTitle string
+	AlbumTitle string
+	ArtistName string
+}
+
+func main() {
+	lastSong := ""
+	lastAlbum := ""
+	lastArtist := ""
+
+	lastTimeRemaining := 0
+
+	albumArtURL := ""
+	
+	discordLoggedIn := false
 
 	// Login to UploadCare API
 	creds := ucare.APICreds{
@@ -46,54 +57,78 @@ func main() {
 	for {
 		// Make sure music is playing
 		if isMusicAppRunning() && getMusicState() == "playing" {
-			songTitle, albumTitle, artistName := getSongMetaData()
+			songMetaData := getSongMetaData()
 
 			// If music stopped playing between first check and now, then stop
-			if songTitle != "" && albumTitle != "" && artistName != "" {
-				songStartTime, songEndTime := getSongTimestamps()
+			if songMetaData.SongTitle != "" && songMetaData.AlbumTitle != "" && songMetaData.ArtistName != "" {
 
-				// If the album has changed, check if the file exists on CDN, otherwise upload
-				if albumTitle != lastAlbum {
-					fileTitle := artistName + "-" + albumTitle + ".jpg"
-					possibleAlbumArt := checkIfFileExists(fileTitle, uCareClient)
-					if possibleAlbumArt != "" {
-						albumArtURL = possibleAlbumArt
-					} else {
-						albumArtURL = uploadNewAlbumArt(fileTitle, uCareClient)
+				// If not currently logged into Discord RPC, attempt to login
+				if !discordLoggedIn {
+					client.Login("1111418320843976784")
+					if err != nil {
+						panic(err)
+					}
+					discordLoggedIn = true
+				}
+
+				songStartTime, songEndTime, timeRemaining := getSongTimestamps()
+
+				// Checks if it's possible a status update may be required. If the song title/artist/album changes, or if the difference in time is greater than the refresh time
+				// An extra second is added to the refresh time to account for rounding errors
+				if math.Abs(float64(timeRemaining - lastTimeRemaining)) > refreshSeconds + 1 || songMetaData.SongTitle != lastSong || songMetaData.AlbumTitle != lastAlbum || songMetaData.ArtistName != lastArtist {
+					
+					// If the album has changed, check if the album art exists on CDN, otherwise upload new album art
+					if songMetaData.AlbumTitle != lastAlbum {
+						fileTitle := songMetaData.ArtistName + "-" + songMetaData.AlbumTitle + ".jpg"
+						possibleAlbumArt := checkIfFileExists(fileTitle, uCareClient)
+						if possibleAlbumArt != "" {
+							albumArtURL = possibleAlbumArt
+						} else {
+							albumArtURL = uploadNewAlbumArt(fileTitle, uCareClient)
+						}
+
+						lastAlbum = songMetaData.AlbumTitle
+					}
+
+					// Set Discord activity
+					err := client.SetActivity(client.Activity{
+						State:      "by " + songMetaData.ArtistName,
+						Details:    songMetaData.SongTitle,
+						LargeImage: albumArtURL,
+						LargeText:  songMetaData.AlbumTitle,
+						Timestamps: &client.Timestamps{
+							Start: &songStartTime,
+							End:   &songEndTime,
+						},
+						Buttons: []*client.Button{
+							{
+								Label: "View on GitHub",
+								Url:   "https://github.com/zvandermeer/macOS-Music-RPC",
+							},
+						},
+					})
+
+					if err != nil {
+						panic(err)
 					}
 				}
-
-				lastAlbum = albumTitle
-
-				// Set Discord activity
-				err := client.SetActivity(client.Activity{
-					State:      "by " + artistName,
-					Details:    songTitle,
-					LargeImage: albumArtURL,
-					LargeText:  albumTitle,
-					Timestamps: &client.Timestamps{
-						Start: &songStartTime,
-						End:   &songEndTime,
-					},
-					Buttons: []*client.Button{
-						{
-							Label: "View on GitHub",
-							Url:   "https://github.com/ovandermeer/macOS-Music-RPC",
-						},
-					},
-				})
-
-				if err != nil {
-					panic(err)
-				}
+				lastTimeRemaining = timeRemaining
 			} else {
-				client.SetActivity(client.Activity{})
+				// If music isn't playing, set status to blank and log out
+				if discordLoggedIn {
+					client.Logout()
+					discordLoggedIn = false
+				}
 			}
-
-			time.Sleep(5 * time.Second)
-		} else { // If music isn't playing, set the status to blank
-			client.SetActivity(client.Activity{})
+		} else { 
+			// If music isn't playing, set status to blank and log out
+			if discordLoggedIn {
+				client.Logout()
+				discordLoggedIn = false
+			}
 		}
+
+		time.Sleep(refreshSeconds * time.Second)
 	}
 }
 
@@ -127,8 +162,8 @@ func uploadNewAlbumArt(fileTitle string, uCareClient ucare.Client) string {
 		panic(err)
 	}
 
-	// Replaces all ":" characters with the "/" character. AppleScript uses ":" to deliminate file paths, but for some reason changes "/" characters into ":" characters when
-	// writing to a file.
+	// Replaces all ":" characters with the "/" character. AppleScript uses ":" to deliminate file paths, 
+	// but for some reason changes "/" characters into ":" characters when writing to a file.
 	fileTitle = strings.ReplaceAll(fileTitle, ":", "/")
 
 	// Change all "/" characters to ":" characters for AppleScript file paths
@@ -236,22 +271,20 @@ func checkIfFileExists(fileTitle string, uCareClient ucare.Client) string {
 }
 
 // Gets metadata about the currently playing song
-func getSongMetaData() (string, string, string) {
-	// AppleScript code to get the song title, album title, and artist
+func getSongMetaData() (myMetadata SongData) {
+	// Applescript code to get metadata from the Music app
 	script := `tell application "Music"
 					if player state is playing then
 						set currentTrack to current track
 						set songTitle to name of currentTrack
 						set albumTitle to album of currentTrack
 						set artistName to artist of currentTrack
-						return {songTitle, albumTitle, artistName}
+						return "{\"songTitle\":\"" & songTitle & "\",\"albumTitle\":\"" & albumTitle & "\",\"artistName\":\"" & artistName & "\"}"				
 					end if
-			   end tell`
+				end tell`
 
-	// Command to execute the AppleScript code using osascript
 	cmd := exec.Command("osascript", "-e", script)
 
-	// Run the command and capture the output
 	output, err := cmd.Output()
 	if err != nil {
 		panic(err)
@@ -260,22 +293,13 @@ func getSongMetaData() (string, string, string) {
 	// Remove leading/trailing whitespace and newline characters
 	result := strings.TrimSpace(string(output))
 
-	// Split the output into individual fields
-	fields := strings.Split(result, ", ")
-	if len(fields) != 3 {
-		return "", "", ""
-	}
+	json.Unmarshal([]byte(result), &myMetadata)
 
-	// Extract the song title, album title, and artist
-	songTitle := strings.Trim(fields[0], "\"")
-	albumTitle := strings.Trim(fields[1], "\"")
-	artistName := strings.Trim(fields[2], "\"")
-
-	return songTitle, albumTitle, artistName
+	return 
 }
 
-// Returns the end time of the song
-func getSongTimestamps() (time.Time, time.Time) {
+// Returns the start and end time of the song
+func getSongTimestamps() (time.Time, time.Time, int) {
 	script := `tell application "Music"
 		if player state is playing then
 			return {duration of current track, player position}
@@ -286,7 +310,7 @@ func getSongTimestamps() (time.Time, time.Time) {
 
 	output, err := cmd.Output()
 	if err != nil {
-		return time.Now(), time.Now()
+		return time.Now(), time.Now(), 0
 	}
 
 	// Remove leading/trailing whitespace and newline characters
@@ -296,20 +320,20 @@ func getSongTimestamps() (time.Time, time.Time) {
 
 	now := time.Now()
 
+	// Calculate timestamps
 	songDuration, err := strconv.Atoi(strings.Split(fields[0], ".")[0])
 	if err != nil {
-		return time.Now(), time.Now()
+		return time.Now(), time.Now(), 0
 	}
 	timeElapsed, err := strconv.Atoi(strings.Split(fields[1], ".")[0])
 	if err != nil {
-		return time.Now(), time.Now()
+		return time.Now(), time.Now(), 0
 	}
 
 	timeRemaining := songDuration - timeElapsed
 
-
 	endTime := now.Add(time.Second * time.Duration(timeRemaining))
 	startTime := now.Add(-(time.Second * time.Duration(songDuration - timeRemaining)))
 
-	return startTime, endTime
+	return startTime, endTime, timeRemaining
 }
