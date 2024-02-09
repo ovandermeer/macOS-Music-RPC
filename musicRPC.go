@@ -24,14 +24,14 @@ import (
 const refreshSeconds = 5
 
 type SongData struct {
-	SongTitle string
+	SongTitle  string
 	AlbumTitle string
 	ArtistName string
 }
 
 type Album struct {
 	FileName string `json:"filename"`
-	URL string `json:"url"`
+	URL      string `json:"url"`
 }
 
 var albums []Album
@@ -46,7 +46,7 @@ func main() {
 	lastTimeRemaining := 0
 
 	albumArtURL := ""
-	
+
 	discordLoggedIn := false
 
 	// Login to UploadCare API
@@ -73,7 +73,7 @@ func main() {
 	username = currentUser.Username
 
 	if _, err := os.Stat("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc"); os.IsNotExist(err) {
-		os.Mkdir("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc", 0744)
+		os.Mkdir("/Users/"+username+"/Library/Application Support/com.github.zvandermeer.macOS-music-rpc", 0744)
 	}
 
 	if _, err := os.Stat("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc/albumArtDB.json"); os.IsNotExist(err) {
@@ -116,14 +116,12 @@ func main() {
 
 				// Checks if it's possible a status update may be required. If the song title/artist/album changes, or if the difference in time is greater than the refresh time
 				// An extra second is added to the refresh time to account for rounding errors
-				if math.Abs(float64(timeRemaining - lastTimeRemaining)) > refreshSeconds + 1 || songMetaData.SongTitle != lastSong || songMetaData.AlbumTitle != lastAlbum || songMetaData.ArtistName != lastArtist {
-					
+				if songMetaData.SongTitle != lastSong || songMetaData.AlbumTitle != lastAlbum || songMetaData.ArtistName != lastArtist || math.Abs(float64(timeRemaining-lastTimeRemaining)) > refreshSeconds+1 {
+					fmt.Println("Im runnin!")
 					// If the album has changed, check if the album art exists on CDN, otherwise upload new album art
 					if songMetaData.AlbumTitle != lastAlbum {
 						fileTitle := songMetaData.ArtistName + "-" + songMetaData.AlbumTitle + ".jpg"
 						albumArtURL = getAlbumArtURL(fileTitle, uCareClient)
-
-						lastAlbum = songMetaData.AlbumTitle
 					}
 
 					// Set Discord activity
@@ -148,6 +146,10 @@ func main() {
 						panic(err)
 					}
 				}
+
+				lastSong = songMetaData.SongTitle
+				lastAlbum = songMetaData.AlbumTitle
+				lastArtist = songMetaData.ArtistName
 				lastTimeRemaining = timeRemaining
 			} else {
 				// If music isn't playing, set status to blank and log out
@@ -156,7 +158,7 @@ func main() {
 					discordLoggedIn = false
 				}
 			}
-		} else { 
+		} else {
 			// If music isn't playing, set status to blank and log out
 			if discordLoggedIn {
 				client.Logout()
@@ -198,7 +200,7 @@ func uploadNewAlbumArt(fileTitle string, uCareClient ucare.Client) string {
 		panic(err)
 	}
 
-	// Replaces all ":" characters with the "/" character. AppleScript uses ":" to deliminate file paths, 
+	// Replaces all ":" characters with the "/" character. AppleScript uses ":" to deliminate file paths,
 	// but for some reason changes "/" characters into ":" characters when writing to a file.
 	fileTitle = strings.ReplaceAll(fileTitle, ":", "/")
 
@@ -293,7 +295,7 @@ func writeJson() {
 		panic(err)
 	}
 
-	_, err =  f.Write(jsonData)
+	_, err = f.Write(jsonData)
 	if err != nil {
 		panic(err)
 	}
@@ -301,13 +303,13 @@ func writeJson() {
 
 func findArtInDB(fileTitle string, uCareClient ucare.Client) string {
 	fmt.Println("Checking database")
-	for  i := 0; i < len(albums); i++ {
+	for i := 0; i < len(albums); i++ {
 		if albums[i].FileName == fileTitle {
 			resp, err := http.Get(albums[i].URL)
 			if err != nil {
 				panic(err)
 			}
-			
+
 			if resp.StatusCode == 200 {
 				fmt.Println("Found!")
 				return albums[i].URL
@@ -316,7 +318,7 @@ func findArtInDB(fileTitle string, uCareClient ucare.Client) string {
 			fmt.Println("Found, but failed on CDN, fixing...")
 			albums[i].URL = findArtOnline(fileTitle, uCareClient)
 			writeJson()
-			
+
 			fmt.Println("Fixed!")
 			return albums[i].URL
 		}
@@ -396,7 +398,7 @@ func getSongMetaData() (myMetadata SongData) {
 
 	json.Unmarshal([]byte(result), &myMetadata)
 
-	return 
+	return
 }
 
 // Returns the start and end time of the song
@@ -434,7 +436,7 @@ func getSongTimestamps() (time.Time, time.Time, int) {
 	timeRemaining := songDuration - timeElapsed
 
 	endTime := now.Add(time.Second * time.Duration(timeRemaining))
-	startTime := now.Add(-(time.Second * time.Duration(songDuration - timeRemaining)))
+	startTime := now.Add(-(time.Second * time.Duration(songDuration-timeRemaining)))
 
 	return startTime, endTime, timeRemaining
 }
