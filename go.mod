@@ -1,4 +1,4 @@
-module github.com/ovandermeer/macOS-music-rpc
+module github.com/zvandermeer/macOS-music-rpc
 
 go 1.20
 

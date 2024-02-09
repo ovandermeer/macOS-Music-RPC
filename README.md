@@ -8,7 +8,7 @@
 - Low resource usage
 
 ## Installing
-- Download the latest release from the [releases tab](https://github.com/ovandermeer/macOS-Music-RPC/releases)
+- Download the latest release from the [releases tab](https://github.com/zvandermeer/macOS-Music-RPC/releases)
 - Run the following commands to start the application:
 ```
 chmod +x macOS-music-rpc-arm64 // Make the file executable

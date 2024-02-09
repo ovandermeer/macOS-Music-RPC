@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +28,15 @@ type SongData struct {
 	AlbumTitle string
 	ArtistName string
 }
+
+type Album struct {
+	FileName string `json:"filename"`
+	URL string `json:"url"`
+}
+
+var albums []Album
+
+var username string
 
 func main() {
 	lastSong := ""
@@ -52,6 +64,35 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	currentUser, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+
+	username = currentUser.Username
+
+	if _, err := os.Stat("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc"); os.IsNotExist(err) {
+		os.Mkdir("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc", 0744)
+	}
+
+	if _, err := os.Stat("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc/albumArtDB.json"); os.IsNotExist(err) {
+		os.Create("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc/albumArtDB.json")
+	}
+
+	// Open our jsonFile
+	jsonFile, err := os.Open("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc/albumArtDB.json")
+	// if we os.Open returns an error then handle it
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Successfully Opened albumArtDB.json")
+	// defer the closing of our jsonFile so that we can parse it later on
+	defer jsonFile.Close()
+
+	byteValue, _ := io.ReadAll(jsonFile)
+
+	json.Unmarshal(byteValue, &albums)
 
 	// Main loop
 	for {
@@ -240,11 +281,52 @@ func uploadNewAlbumArt(fileTitle string, uCareClient ucare.Client) string {
 
 	os.Remove(path)
 
-	return "https://ucarecdn.com/" + fID + "/-/preview/938x432/-/quality/smart/-/format/auto/"
+	fileUrl := "https://ucarecdn.com/" + fID + "/-/preview/938x432/-/quality/smart/-/format/auto/"
+	albums = append(albums, Album{FileName: fileTitle, URL: fileUrl})
+	writeJson()
+	return fileUrl
+}
+
+func writeJson() {
+	f, err := os.Create("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc/albumArtDB.json")
+	if err != nil {
+		panic(err)
+	}
+
+	jsonData, err := json.Marshal(albums)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err =  f.Write(jsonData)
+	if err != nil {
+		panic(err)
+	}
 }
 
 // Checks if album art already exists on CDN to reduce upload usage
 func checkIfFileExists(fileTitle string, uCareClient ucare.Client) string {
+	fmt.Println("Checking database")
+
+	for  i := 0; i < len(albums); i++ {
+		if albums[i].FileName == fileTitle {
+			resp, err := http.Get(albums[i].URL)
+			if err != nil {
+				panic(err)
+			}
+			
+			if resp.StatusCode == 200 {
+				fmt.Println("Found!")
+				return albums[i].URL
+			}
+
+			fmt.Println("Found, but failed on CDN, falling back")
+			break
+		}
+		fmt.Println("Unable to find")
+	}
+
+	fmt.Println("Checking online")
 	fileSvc := file.NewService(uCareClient)
 
 	listParams := file.ListParams{
@@ -264,9 +346,14 @@ func checkIfFileExists(fileTitle string, uCareClient ucare.Client) string {
 		}
 
 		if finfo.BasicFileInfo.OriginalFileName == fileTitle {
-			return "https://ucarecdn.com/" + finfo.ID + "/-/preview/938x432/-/quality/smart/-/format/auto/"
+			fileUrl := "https://ucarecdn.com/" + finfo.ID + "/-/preview/938x432/-/quality/smart/-/format/auto/"
+			albums = append(albums, Album{FileName: fileTitle, URL: fileUrl})
+			writeJson()
+			return fileUrl
 		}
 	}
+	
+	fmt.Println("Album art doesn't exist on CDN, uploading")
 	return ""
 }
 
