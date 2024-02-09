@@ -121,12 +121,7 @@ func main() {
 					// If the album has changed, check if the album art exists on CDN, otherwise upload new album art
 					if songMetaData.AlbumTitle != lastAlbum {
 						fileTitle := songMetaData.ArtistName + "-" + songMetaData.AlbumTitle + ".jpg"
-						possibleAlbumArt := checkIfFileExists(fileTitle, uCareClient)
-						if possibleAlbumArt != "" {
-							albumArtURL = possibleAlbumArt
-						} else {
-							albumArtURL = uploadNewAlbumArt(fileTitle, uCareClient)
-						}
+						albumArtURL = getAlbumArtURL(fileTitle, uCareClient)
 
 						lastAlbum = songMetaData.AlbumTitle
 					}
@@ -304,10 +299,8 @@ func writeJson() {
 	}
 }
 
-// Checks if album art already exists on CDN to reduce upload usage
-func checkIfFileExists(fileTitle string, uCareClient ucare.Client) string {
+func findArtInDB(fileTitle string, uCareClient ucare.Client) string {
 	fmt.Println("Checking database")
-
 	for  i := 0; i < len(albums); i++ {
 		if albums[i].FileName == fileTitle {
 			resp, err := http.Get(albums[i].URL)
@@ -320,12 +313,21 @@ func checkIfFileExists(fileTitle string, uCareClient ucare.Client) string {
 				return albums[i].URL
 			}
 
-			fmt.Println("Found, but failed on CDN, falling back")
-			break
+			fmt.Println("Found, but failed on CDN, fixing...")
+			albums[i].URL = findArtOnline(fileTitle, uCareClient)
+			writeJson()
+			
+			fmt.Println("Fixed!")
+			return albums[i].URL
 		}
-		fmt.Println("Unable to find")
 	}
 
+	fmt.Println("Unable to find in DB")
+
+	return ""
+}
+
+func findArtOnline(fileTitle string, uCareClient ucare.Client) string {
 	fmt.Println("Checking online")
 	fileSvc := file.NewService(uCareClient)
 
@@ -346,15 +348,27 @@ func checkIfFileExists(fileTitle string, uCareClient ucare.Client) string {
 		}
 
 		if finfo.BasicFileInfo.OriginalFileName == fileTitle {
+			fmt.Println("Found on CDN")
 			fileUrl := "https://ucarecdn.com/" + finfo.ID + "/-/preview/938x432/-/quality/smart/-/format/auto/"
 			albums = append(albums, Album{FileName: fileTitle, URL: fileUrl})
 			writeJson()
 			return fileUrl
 		}
 	}
-	
+
 	fmt.Println("Album art doesn't exist on CDN, uploading")
-	return ""
+	return uploadNewAlbumArt(fileTitle, uCareClient)
+}
+
+// Starts by checking if the Album Art exists on CDN, if not then upload new art
+func getAlbumArtURL(fileTitle string, uCareClient ucare.Client) string {
+	dbResult := findArtInDB(fileTitle, uCareClient)
+
+	if dbResult != "" {
+		return dbResult
+	}
+
+	return findArtOnline(fileTitle, uCareClient)
 }
 
 // Gets metadata about the currently playing song
