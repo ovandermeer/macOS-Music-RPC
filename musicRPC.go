@@ -376,15 +376,29 @@ func getAlbumArtURL(fileTitle string, uCareClient ucare.Client) string {
 // Gets metadata about the currently playing song
 func getSongMetaData() (myMetadata SongData) {
 	// Applescript code to get metadata from the Music app
-	script := `tell application "Music"
+	script := `on replace_chars(this_text, search_string, replacement_string)
+					set AppleScript's text item delimiters to the search_string
+					set the item_list to every text item of this_text
+					set AppleScript's text item delimiters to the replacement_string
+					set this_text to the item_list as string
+					set AppleScript's text item delimiters to ""
+					return this_text
+				end replace_chars
+
+				tell application "Music"
 					if player state is playing then
 						set currentTrack to current track
 						set songTitle to name of currentTrack
 						set albumTitle to album of currentTrack
-						set artistName to artist of currentTrack
-						return "{\"songTitle\":\"" & songTitle & "\",\"albumTitle\":\"" & albumTitle & "\",\"artistName\":\"" & artistName & "\"}"				
+						set artistName to artist of currentTrack				
 					end if
-				end tell`
+				end tell
+
+				set songTitle to replace_chars(songTitle, "\"", "\\\"")
+				set albumTitle to replace_chars(albumTitle, "\"", "\\\"")
+				set artistName to replace_chars(artistName, "\"", "'\\\"'")
+
+				return "{\"songTitle\":\"" & songTitle & "\",\"albumTitle\":\"" & albumTitle & "\",\"artistName\":\"" & artistName & "\"}"`
 
 	cmd := exec.Command("osascript", "-e", script)
 
