@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,7 +20,7 @@ import (
 	"github.com/uploadcare/uploadcare-go/upload"
 )
 
-const refreshSeconds = 5
+const refreshSeconds = 20
 
 type SongData struct {
 	SongTitle  string
@@ -96,6 +95,8 @@ func main() {
 
 	// Main loop
 	for {
+		var timeRemaining int
+
 		// Make sure music is playing
 		if isMusicAppRunning() && getMusicState() == "playing" {
 			songMetaData := getSongMetaData()
@@ -116,7 +117,7 @@ func main() {
 
 				// Checks if it's possible a status update may be required. If the song title/artist/album changes, or if the difference in time is greater than the refresh time
 				// An extra second is added to the refresh time to account for rounding errors
-				if songMetaData.SongTitle != lastSong || songMetaData.AlbumTitle != lastAlbum || songMetaData.ArtistName != lastArtist || math.Abs(float64(timeRemaining-lastTimeRemaining)) > refreshSeconds+1 {
+				if songMetaData.SongTitle != lastSong || songMetaData.AlbumTitle != lastAlbum || songMetaData.ArtistName != lastArtist || timeRemaining-lastTimeRemaining > refreshSeconds+1 {
 					fmt.Println("Im runnin!")
 					// If the album has changed, check if the album art exists on CDN, otherwise upload new album art
 					if songMetaData.AlbumTitle != lastAlbum {
@@ -166,7 +167,12 @@ func main() {
 			}
 		}
 
-		time.Sleep(refreshSeconds * time.Second)
+		if timeRemaining != 0 && timeRemaining < refreshSeconds {
+			time.Sleep(time.Duration(timeRemaining+2) * time.Second)
+		} else {
+			time.Sleep(refreshSeconds * time.Second)
+		}
+
 	}
 }
 
