@@ -200,7 +200,7 @@ func isMusicAppRunning() bool {
 }
 
 // Uploads the album art of the currently playing song to the CDN
-func uploadNewAlbumArt(fileTitle string, uCareClient ucare.Client) string {
+func uploadNewAlbumArt(fileTitle string, uCareClient ucare.Client) Album {
 	path, err := os.Getwd()
 	if err != nil {
 		panic(err)
@@ -285,23 +285,16 @@ func uploadNewAlbumArt(fileTitle string, uCareClient ucare.Client) string {
 	os.Remove(path)
 
 	fileUrl := "https://ucarecdn.com/" + fID + "/-/preview/938x432/-/quality/smart/-/format/auto/"
-	albums = append(albums, Album{FileName: fileTitle, URL: fileUrl})
-	writeJson()
-	return fileUrl
+	return Album{FileName: fileTitle, URL: fileUrl}
 }
 
 func writeJson() {
-	f, err := os.Create("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc/albumArtDB.json")
-	if err != nil {
-		panic(err)
-	}
-
 	jsonData, err := json.Marshal(albums)
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = f.Write(jsonData)
+	err = os.WriteFile("/Users/" + username + "/Library/Application Support/com.github.zvandermeer.macOS-music-rpc/albumArtDB.json", jsonData, 0744)
 	if err != nil {
 		panic(err)
 	}
@@ -322,7 +315,7 @@ func findArtInDB(fileTitle string, uCareClient ucare.Client) string {
 			}
 
 			fmt.Println("Found, but failed on CDN, fixing...")
-			albums[i].URL = findArtOnline(fileTitle, uCareClient)
+			albums[i].URL = findArtOnline(fileTitle, uCareClient).URL
 			writeJson()
 
 			fmt.Println("Fixed!")
@@ -335,7 +328,7 @@ func findArtInDB(fileTitle string, uCareClient ucare.Client) string {
 	return ""
 }
 
-func findArtOnline(fileTitle string, uCareClient ucare.Client) string {
+func findArtOnline(fileTitle string, uCareClient ucare.Client) Album {
 	fmt.Println("Checking online")
 	fileSvc := file.NewService(uCareClient)
 
@@ -358,9 +351,7 @@ func findArtOnline(fileTitle string, uCareClient ucare.Client) string {
 		if finfo.BasicFileInfo.OriginalFileName == fileTitle {
 			fmt.Println("Found on CDN")
 			fileUrl := "https://ucarecdn.com/" + finfo.ID + "/-/preview/938x432/-/quality/smart/-/format/auto/"
-			albums = append(albums, Album{FileName: fileTitle, URL: fileUrl})
-			writeJson()
-			return fileUrl
+			return Album{FileName: fileTitle, URL: fileUrl}
 		}
 	}
 
@@ -376,7 +367,11 @@ func getAlbumArtURL(fileTitle string, uCareClient ucare.Client) string {
 		return dbResult
 	}
 
-	return findArtOnline(fileTitle, uCareClient)
+	myAlbum := findArtOnline(fileTitle, uCareClient)
+	albums = append(albums, myAlbum)
+	writeJson()
+
+	return myAlbum.URL
 }
 
 // Gets metadata about the currently playing song
